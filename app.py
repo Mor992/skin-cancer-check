@@ -11,10 +11,10 @@ st.set_page_config(page_title="Skin Cancer ResNet + Grad-CAM", layout="centered"
 
 # ---------- Download model from Google Drive ----------
 MODEL_PATH = "resnet_skin_cancer.h5"
-DRIVE_FILE_ID = "https://drive.google.com/file/d/1Rw-X-K2o75B70rT2Dwo-WFeA_RvXXWI3/view?usp=drive_link"   # <-- REPLACE THIS
+DRIVE_FILE_ID = "1Rw-X-K2o75B70rT2Dwo-WFeA_RvXXWI3"
 
 if not os.path.exists(MODEL_PATH):
-    url = f"https://drive.google.com/uc?id={https://drive.google.com/file/d/1Rw-X-K2o75B70rT2Dwo-WFeA_RvXXWI3/view?usp=drive_link}"
+    url = f"https://drive.google.com/uc?id={DRIVE_FILE_ID}"
     st.info("Downloading model from Google Drive. This may take a minute...")
     gdown.download(url, MODEL_PATH, quiet=False)
     st.success("Model downloaded.")
