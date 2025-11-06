@@ -27,6 +27,11 @@ def load_model(path):
 
 model = load_model(MODEL_PATH)
 
+if st.button("Show model layer names"):
+    st.write("Model layers:")
+    for layer in model.layers:
+        st.write(layer.name)
+
 # ---------- Grad-CAM functions ----------
 def get_gradcam(model, img_array, last_conv_layer_name):
     grad_model = tf.keras.models.Model([model.inputs],
