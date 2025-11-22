@@ -1,7 +1,7 @@
 # streamlit_gradcam_app.py
 # Simple Streamlit app to load a Keras model, run predictions, and show Grad-CAM.
 # MODEL_LOCAL_PATH should point to the model file in the environment.
-# If the local file is not present, the app will attempt to load from the Drive link or allow upload.
+# If the local file is not present, the app will attempt to download from Drive or allow upload.
 
 import io
 import os
@@ -15,6 +15,7 @@ from PIL import Image
 import tensorflow as tf
 from tensorflow.keras.preprocessing import image as kimage
 from tensorflow.keras.models import load_model
+import requests  # Added for downloading from URL
 
 # --- CONFIG ---
 # Local path to your model file (the environment path expected).
@@ -43,11 +44,19 @@ def get_model():
             st.error(f"Failed to load model at {MODEL_LOCAL_PATH}: {e}")
             return None, None
     else:
-        st.warning("Model file not found at the default path. Attempting to load from Drive link...")
+        st.warning("Model file not found at the default path. Attempting to download from Drive link...")
         try:
-            model = load_keras_model(MODEL_DRIVE_URL)
-            st.success("Model loaded from Drive link.")
-            return model, MODEL_DRIVE_URL
+            response = requests.get(MODEL_DRIVE_URL)
+            if response.status_code == 200:
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".keras")
+                tmp.write(response.content)
+                tmp.flush()
+                tmp.close()
+                model = load_keras_model(tmp.name)
+                st.success("Model downloaded and loaded from Drive link.")
+                return model, tmp.name
+            else:
+                raise Exception(f"Failed to download model from Drive: HTTP {response.status_code}")
         except Exception as e:
             st.error(f"Failed to load model from Drive: {e}")
             st.info("Please upload a Keras model file (.keras or .h5) manually.")
