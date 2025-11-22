@@ -1,5 +1,7 @@
 streamlit
 tensorflow
-matplotlib
+pillow
 numpy
+matplotlib
 gdown
+
