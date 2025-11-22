@@ -19,9 +19,9 @@ import requests  # Added for downloading from URL
 
 # --- CONFIG ---
 # Local path to your model file (the environment path expected).
-MODEL_LOCAL_PATH = "/mnt/data/final_resnet_model.keras"
+MODEL_LOCAL_PATH = "final_resnet_model.keras"
 # Drive link for direct download (converted to direct download URL)
-MODEL_DRIVE_URL = "https://drive.google.com/uc?export=download&id=1kJWpQQlF-2Rtwj2xRmVtbDw-83cyjD3q"
+MODEL_DRIVE_URL = "https://drive.google.com/file/d/1kJWpQQlF-2Rtwj2xRmVtbDw-83cyjD3q/view?usp=sharing"
 
 # Default class names (override in app UI if different)
 DEFAULT_CLASS_NAMES = "benign,melanoma,other"
