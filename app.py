@@ -1,7 +1,7 @@
 # streamlit_gradcam_app.py
 # Simple Streamlit app to load a Keras model, run predictions, and show Grad-CAM.
 # MODEL_LOCAL_PATH should point to the model file in the environment.
-# If the local file is not present, the app will show instructions to upload or provide a download link.
+# If the local file is not present, the app will attempt to load from the Drive link or allow upload.
 
 import io
 import os
@@ -19,8 +19,8 @@ from tensorflow.keras.models import load_model
 # --- CONFIG ---
 # Local path to your model file (the environment path expected).
 MODEL_LOCAL_PATH = "/mnt/data/final_resnet_model.keras"
-# Backup: Drive link you provided (user can download manually if needed)
-MODEL_DRIVE_LINK = "https://drive.google.com/file/d/1kJWpQQlF-2Rtwj2xRmVtbDw-83cyjD3q/view?usp=drive_link"
+# Drive link for direct download (converted to direct download URL)
+MODEL_DRIVE_URL = "https://drive.google.com/uc?export=download&id=1kJWpQQlF-2Rtwj2xRmVtbDw-83cyjD3q"
 
 # Default class names (override in app UI if different)
 DEFAULT_CLASS_NAMES = "benign,melanoma,other"
@@ -28,12 +28,11 @@ DEFAULT_CLASS_NAMES = "benign,melanoma,other"
 st.set_page_config(page_title="Grad-CAM Streamlit Demo", layout="wide")
 st.title("Grad-CAM demo — upload image, predict, and explain")
 
-# Utility: load or prompt for model
+# Utility: load model from path (can be local or URL)
 @st.cache_resource
 def load_keras_model(path: str):
-    # load_model with compile=False to avoid requiring custom objects
-    return load_model("https://drive.google.com/uc?export=download&id=1kJWpQQlF-2Rtwj2xRmVtbDw-83cyjD3q"))
-
+    # load_model with compile=False to avoid requiring custom objects if needed
+    return load_model(path, compile=False)
 
 def get_model():
     if os.path.exists(MODEL_LOCAL_PATH):
@@ -44,34 +43,37 @@ def get_model():
             st.error(f"Failed to load model at {MODEL_LOCAL_PATH}: {e}")
             return None, None
     else:
-        st.warning("Model file not found at the default path. Either upload a model file or place it at the path shown below.")
-        st.info(f"Expected model path: {MODEL_LOCAL_PATH}")
-        uploaded = st.file_uploader("Upload a Keras model file (.keras or .h5)", type=["keras","h5"], key="model_upload")
-        if uploaded is not None:
-            # save to temp file then load
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".keras")
-            tmp.write(uploaded.read())
-            tmp.flush()
-            tmp.close()
-            try:
-                model = load_keras_model(tmp.name)
-                return model, tmp.name
-            except Exception as e:
-                st.error(f"Failed to load uploaded model: {e}")
-                return None, None
-        st.markdown(f"If you prefer, download the model manually from the Drive link and place it at the path above: {MODEL_DRIVE_LINK}")
+        st.warning("Model file not found at the default path. Attempting to load from Drive link...")
+        try:
+            model = load_keras_model(MODEL_DRIVE_URL)
+            st.success("Model loaded from Drive link.")
+            return model, MODEL_DRIVE_URL
+        except Exception as e:
+            st.error(f"Failed to load model from Drive: {e}")
+            st.info("Please upload a Keras model file (.keras or .h5) manually.")
+            uploaded = st.file_uploader("Upload a Keras model file (.keras or .h5)", type=["keras","h5"], key="model_upload")
+            if uploaded is not None:
+                # save to temp file then load
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".keras")
+                tmp.write(uploaded.read())
+                tmp.flush()
+                tmp.close()
+                try:
+                    model = load_keras_model(tmp.name)
+                    return model, tmp.name
+                except Exception as e:
+                    st.error(f"Failed to load uploaded model: {e}")
+                    return None, None
         return None, None
 
-
-def preprocess_pil(img: Image.Image, target_size: List[int]):
+def preprocess_pil(img: Image.Image, target_size: tuple):
     img = img.convert("RGB")
-    img = img.resize((target_size[1], target_size[2])) if len(target_size) == 3 else img.resize((224, 224))
+    img = img.resize(target_size[1:3])  # Assuming target_size is (batch, height, width, channels)
     arr = kimage.img_to_array(img)
     arr = np.expand_dims(arr, 0)
     # Basic preprocessing: scale to [0,1]
     arr = arr / 255.0
     return arr
-
 
 def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
     # Adapted from Keras docs
@@ -99,7 +101,6 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
     heatmap = heatmap.numpy()
     return heatmap
 
-
 def overlay_heatmap(img: Image.Image, heatmap, alpha=0.4):
     import matplotlib.cm as cm
     import numpy as np
@@ -111,7 +112,6 @@ def overlay_heatmap(img: Image.Image, heatmap, alpha=0.4):
     colored_img = Image.fromarray(colored).resize(img.size)
     blended = Image.blend(img.convert("RGBA"), colored_img.convert("RGBA"), alpha)
     return blended
-
 
 # --- Main app ---
 model, model_path = get_model()
@@ -151,11 +151,11 @@ if model is not None:
         if preds.ndim == 2 and preds.shape[1] > 1:
             probs = tf.nn.softmax(preds[0]).numpy()
         else:
-            # binary or single-output
-            probs = preds[0]
-            # ensure 2-class style
-        top_idx = int(np.argmax(probs)) if isinstance(probs, (list, np.ndarray)) else int(probs > 0.5)
-        top_prob = float(np.max(probs)) if isinstance(probs, (list, np.ndarray)) else float(probs)
+            # binary or single-output, assume sigmoid
+            probs = tf.nn.sigmoid(preds[0]).numpy()
+            probs = np.array([1 - probs[0], probs[0]])  # Convert to [prob_class0, prob_class1]
+        top_idx = int(np.argmax(probs))
+        top_prob = float(np.max(probs))
         predicted_class = class_names[top_idx] if top_idx < len(class_names) else f"class_{top_idx}"
 
         st.markdown(f"**Prediction:** {predicted_class}   —   **Confidence:** {top_prob:.3f}")
@@ -169,29 +169,29 @@ if model is not None:
             except Exception as e:
                 st.error(f"Failed to compute Grad-CAM: {e}")
 
-        # generate simple report if cancer predicted
-        cancer_keywords = ["cancer", "melanoma", "carcinoma", "malignant"]
-        is_cancer = any(k.lower() in predicted_class.lower() for k in cancer_keywords)
-        if is_cancer:
-            st.subheader("Automated report (draft)")
-            report_lines = []
-            report_lines.append(f"Predicted: {predicted_class} (confidence {top_prob:.3f})")
+        # generate simple report based on predicted type
+        st.subheader("Automated report (draft)")
+        report_lines = []
+        report_lines.append(f"Predicted: {predicted_class} (confidence {top_prob:.3f})")
+        if predicted_class.lower() in ["melanoma", "cancer", "malignant"]:
             report_lines.append("Recommendation: Refer to a dermatologist/oncologist for confirmatory biopsy and further clinical assessment.")
             report_lines.append("Suggested next steps:")
             report_lines.append(" - Clinical examination by specialist")
             report_lines.append(" - Dermoscopic imaging")
             report_lines.append(" - Biopsy and histopathological analysis if indicated")
-            report_text = "\n".join(report_lines)
-            st.text_area("Report", value=report_text, height=200)
-
-            # allow download
-            st.download_button("Download report as .txt", report_text, file_name="automated_report.txt")
         else:
-            st.info("Prediction does not indicate cancer. This is an automated assessment — clinical correlation required.")
+            report_lines.append("This prediction does not indicate malignancy. However, clinical correlation is required.")
+            report_lines.append("Suggested next steps:")
+            report_lines.append(" - Regular monitoring")
+            report_lines.append(" - Consult a healthcare professional for any concerns")
+        report_text = "\n".join(report_lines)
+        st.text_area("Report", value=report_text, height=200)
+
+        # allow download
+        st.download_button("Download report as .txt", report_text, file_name="automated_report.txt")
 
 else:
     st.stop()
-
 
 # Footer note
 st.markdown("---")
