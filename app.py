@@ -1,95 +1,198 @@
-import streamlit as st
+# streamlit_gradcam_app.py
+# Simple Streamlit app to load a Keras model, run predictions, and show Grad-CAM.
+# MODEL_LOCAL_PATH should point to the model file in the environment.
+# If the local file is not present, the app will show instructions to upload or provide a download link.
+
+import io
+import os
+import tempfile
+from typing import List
+
 import numpy as np
+import streamlit as st
 from PIL import Image
+
 import tensorflow as tf
-import matplotlib.pyplot as plt
+from tensorflow.keras.preprocessing import image as kimage
+from tensorflow.keras.models import load_model
 
-st.set_page_config(page_title="Simple Grad-CAM", layout="centered")
-st.title("Grad-CAM for ResNet")
+# --- CONFIG ---
+# Local path to your model file (the environment path expected).
+MODEL_LOCAL_PATH = "/mnt/data/final_resnet_model.keras"
+# Backup: Drive link you provided (user can download manually if needed)
+MODEL_DRIVE_LINK = "https://drive.google.com/file/d/1kJWpQQlF-2Rtwj2xRmVtbDw-83cyjD3q/view?usp=drive_link"
 
-# ----------------------------------------------------------
-# Load model (auto-load, no buttons)
-# ----------------------------------------------------------
-MODEL_PATH = "final_resnet_model.keras"
+# Default class names (override in app UI if different)
+DEFAULT_CLASS_NAMES = "benign,melanoma,other"
 
-st.info("Loading model...")
-try:
-    model = tf.keras.models.load_model(MODEL_PATH)
-    st.success("Model loaded successfully")
-except Exception as e:
-    st.error(f"Failed to load model: {e}")
-    st.stop()
+st.set_page_config(page_title="Grad-CAM Streamlit Demo", layout="wide")
+st.title("Grad-CAM demo — upload image, predict, and explain")
 
-# ----------------------------------------------------------
-# Functions
-# ----------------------------------------------------------
+# Utility: load or prompt for model
+@st.cache_resource
+def load_keras_model(path: str):
+    # load_model with compile=False to avoid requiring custom objects
+    return load_model(path, compile=False)
 
-def preprocess(img, target=(224, 224)):
-    img = img.convert("RGB").resize(target)
-    arr = np.array(img).astype("float32")
-    from tensorflow.keras.applications.resnet50 import preprocess_input
-    return preprocess_input(arr)
 
-def gradcam(array, model, layer_name="conv5_block3_out"):
-    x = tf.expand_dims(array, 0)
+def get_model():
+    if os.path.exists(MODEL_LOCAL_PATH):
+        try:
+            model = load_keras_model(MODEL_LOCAL_PATH)
+            return model, MODEL_LOCAL_PATH
+        except Exception as e:
+            st.error(f"Failed to load model at {MODEL_LOCAL_PATH}: {e}")
+            return None, None
+    else:
+        st.warning("Model file not found at the default path. Either upload a model file or place it at the path shown below.")
+        st.info(f"Expected model path: {MODEL_LOCAL_PATH}")
+        uploaded = st.file_uploader("Upload a Keras model file (.keras or .h5)", type=["keras","h5"], key="model_upload")
+        if uploaded is not None:
+            # save to temp file then load
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".keras")
+            tmp.write(uploaded.read())
+            tmp.flush()
+            tmp.close()
+            try:
+                model = load_keras_model(tmp.name)
+                return model, tmp.name
+            except Exception as e:
+                st.error(f"Failed to load uploaded model: {e}")
+                return None, None
+        st.markdown(f"If you prefer, download the model manually from the Drive link and place it at the path above: {MODEL_DRIVE_LINK}")
+        return None, None
 
+
+def preprocess_pil(img: Image.Image, target_size: List[int]):
+    img = img.convert("RGB")
+    img = img.resize((target_size[1], target_size[2])) if len(target_size) == 3 else img.resize((224, 224))
+    arr = kimage.img_to_array(img)
+    arr = np.expand_dims(arr, 0)
+    # Basic preprocessing: scale to [0,1]
+    arr = arr / 255.0
+    return arr
+
+
+def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
+    # Adapted from Keras docs
     grad_model = tf.keras.models.Model(
-        [model.inputs],
-        [model.get_layer(layer_name).output, model.output],
+        [model.inputs], [model.get_layer(last_conv_layer_name).output, model.output]
     )
-
     with tf.GradientTape() as tape:
-        conv, preds = grad_model(x)
-        top = tf.argmax(preds[0])
-        target = preds[:, top]
+        conv_outputs, predictions = grad_model(img_array)
+        if pred_index is None:
+            pred_index = tf.argmax(predictions[0])
+        class_channel = predictions[:, pred_index]
 
-    grads = tape.gradient(target, conv)
-    pooled = tf.reduce_mean(grads, axis=(0,1,2))
+    # Compute gradients of class output w.r.t. conv layer output
+    grads = tape.gradient(class_channel, conv_outputs)
 
-    conv = conv[0]
-    heatmap = conv @ pooled[..., tf.newaxis]
+    # Mean pooling over channels
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+
+    conv_outputs = conv_outputs[0]
+    heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
     heatmap = tf.squeeze(heatmap)
 
-    heatmap = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-8)
-    return heatmap.numpy(), int(top), float(preds[0][top])
+    # Normalize
+    heatmap = tf.maximum(heatmap, 0) / (tf.math.reduce_max(heatmap) + 1e-8)
+    heatmap = heatmap.numpy()
+    return heatmap
 
-def overlay_heatmap(img, heatmap):
-    heatmap = Image.fromarray((heatmap * 255).astype("uint8")).resize(img.size)
-    heatmap = np.array(heatmap)
 
+def overlay_heatmap(img: Image.Image, heatmap, alpha=0.4):
     import matplotlib.cm as cm
-    colored = cm.jet(heatmap / 255.0)[:, :, :3]
-    colored = (colored * 255).astype("uint8")
+    import numpy as np
 
-    return Image.blend(img.convert("RGBA"), Image.fromarray(colored).convert("RGBA"), alpha=0.4)
+    heatmap = np.uint8(255 * heatmap)
+    colormap = cm.get_cmap("jet")
+    colored = colormap(heatmap)
+    colored = np.uint8(colored[:, :, :3] * 255)
+    colored_img = Image.fromarray(colored).resize(img.size)
+    blended = Image.blend(img.convert("RGBA"), colored_img.convert("RGBA"), alpha)
+    return blended
 
-# ----------------------------------------------------------
-# Upload image
-# ----------------------------------------------------------
-uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
-classes_text = st.text_input("Class names (comma separated, optional):")
-classes = [c.strip() for c in classes_text.split(",")] if classes_text else None
+# --- Main app ---
+model, model_path = get_model()
 
-layer_name = st.text_input("Last conv layer name:", "conv5_block3_out")
+st.sidebar.header("Options")
+class_names_input = st.sidebar.text_input("Class names (comma separated)", value=DEFAULT_CLASS_NAMES)
+class_names = [c.strip() for c in class_names_input.split(",") if c.strip()]
 
-if uploaded:
-    img = Image.open(uploaded)
-    arr = preprocess(img)
-
+if model is not None:
+    st.sidebar.success(f"Model loaded from: {model_path}")
+    # infer input shape
     try:
-        heatmap, idx, score = gradcam(arr, model, layer_name)
+        input_shape = model.input_shape
+        st.sidebar.write(f"Model input shape: {input_shape}")
+    except Exception:
+        input_shape = (None, 224, 224, 3)
 
-        label = classes[idx] if classes and idx < len(classes) else str(idx)
-        st.subheader(f"Prediction: {label} (score={score:.4f})")
+    # get last convolutional layer automatically
+    last_conv_layer_name = None
+    for layer in reversed(model.layers):
+        if len(layer.output_shape) == 4:
+            last_conv_layer_name = layer.name
+            break
+    if last_conv_layer_name is None:
+        st.error("Couldn't automatically find a 4D conv layer in the model to use for Grad-CAM. Please ensure model has at least one Conv2D layer.")
 
-        st.image(img, caption="Original Image", use_column_width=True)
-        st.image(overlay_heatmap(img, heatmap), caption="Grad-CAM", use_column_width=True)
+    uploaded_file = st.file_uploader("Upload an image", type=["jpg","jpeg","png"])
+    if uploaded_file is not None:
+        img = Image.open(uploaded_file)
+        st.image(img, caption="Input image", use_column_width=True)
 
-        fig, ax = plt.subplots()
-        ax.imshow(heatmap)
-        ax.axis("off")
-        st.pyplot(fig)
+        # preprocess
+        img_array = preprocess_pil(img, input_shape)
 
-    except Exception as e:
-        st.error(f"Grad-CAM failed: {e}")
+        # predict
+        preds = model.predict(img_array)
+        if preds.ndim == 2 and preds.shape[1] > 1:
+            probs = tf.nn.softmax(preds[0]).numpy()
+        else:
+            # binary or single-output
+            probs = preds[0]
+            # ensure 2-class style
+        top_idx = int(np.argmax(probs)) if isinstance(probs, (list, np.ndarray)) else int(probs > 0.5)
+        top_prob = float(np.max(probs)) if isinstance(probs, (list, np.ndarray)) else float(probs)
+        predicted_class = class_names[top_idx] if top_idx < len(class_names) else f"class_{top_idx}"
+
+        st.markdown(f"**Prediction:** {predicted_class}   —   **Confidence:** {top_prob:.3f}")
+
+        # create grad-cam
+        if last_conv_layer_name:
+            try:
+                heatmap = make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=top_idx)
+                cam_img = overlay_heatmap(img, heatmap)
+                st.image(cam_img, caption="Grad-CAM overlay", use_column_width=True)
+            except Exception as e:
+                st.error(f"Failed to compute Grad-CAM: {e}")
+
+        # generate simple report if cancer predicted
+        cancer_keywords = ["cancer", "melanoma", "carcinoma", "malignant"]
+        is_cancer = any(k.lower() in predicted_class.lower() for k in cancer_keywords)
+        if is_cancer:
+            st.subheader("Automated report (draft)")
+            report_lines = []
+            report_lines.append(f"Predicted: {predicted_class} (confidence {top_prob:.3f})")
+            report_lines.append("Recommendation: Refer to a dermatologist/oncologist for confirmatory biopsy and further clinical assessment.")
+            report_lines.append("Suggested next steps:")
+            report_lines.append(" - Clinical examination by specialist")
+            report_lines.append(" - Dermoscopic imaging")
+            report_lines.append(" - Biopsy and histopathological analysis if indicated")
+            report_text = "\n".join(report_lines)
+            st.text_area("Report", value=report_text, height=200)
+
+            # allow download
+            st.download_button("Download report as .txt", report_text, file_name="automated_report.txt")
+        else:
+            st.info("Prediction does not indicate cancer. This is an automated assessment — clinical correlation required.")
+
+else:
+    st.stop()
+
+
+# Footer note
+st.markdown("---")
+st.caption("Notes: This demo is for educational purposes. Do not use for clinical decision-making.")
