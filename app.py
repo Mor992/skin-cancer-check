@@ -32,7 +32,7 @@ st.title("Grad-CAM demo — upload image, predict, and explain")
 @st.cache_resource
 def load_keras_model(path: str):
     # load_model with compile=False to avoid requiring custom objects
-    return load_model(path, compile=False)
+    return load_model("https://drive.google.com/uc?export=download&id=1kJWpQQlF-2Rtwj2xRmVtbDw-83cyjD3q"))
 
 
 def get_model():
