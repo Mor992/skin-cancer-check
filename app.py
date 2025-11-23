@@ -17,7 +17,7 @@ def download_file_from_google_drive(file_id):
     """Download a file from google drive and return path to temp file.
        Handles large-file confirm token flow.
     """
-    base_url = "https://docs.google.com/uc?export=download"
+    base_url = "https://drive.google.com/uc?export=download&id=1uHgOzbvTY8hus4_ApzLlv7VO-Ye5uWpX"
     session = requests.Session()
     response = session.get(base_url, params={"id": file_id}, stream=True)
     token = None
