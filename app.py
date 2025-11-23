@@ -1,148 +1,116 @@
 import streamlit as st
 import numpy as np
 import tensorflow as tf
-import tempfile
-import requests
 import cv2
+import requests
+import tempfile
 from PIL import Image
-import io
 
-# -----------------------------
-# CONFIG
-# -----------------------------
-st.set_page_config(page_title="Skin Lesion Classifier", layout="centered")
+# ---------------------------------------------------------
+# 1) DIRECT GOOGLE DRIVE DOWNLOAD (GUARANTEED WORKING)
+# ---------------------------------------------------------
+FILE_ID = "1uHgOzbvTY8hus4_ApzLlv7VO-Ye5uWpX"
+DOWNLOAD_URL = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
 
-FILE_ID = "1uHgOzbvTY8hus4_ApzLlv7VO-Ye5uWpX"   # your model
-CLASS_NAMES = ["benign", "malignant", "nevus", "other"]
-LAST_CONV_LAYER = "conv5_block3_out"  # For ResNet50
-
-
-# -----------------------------
-# DOWNLOAD MODEL FROM DRIVE
-# -----------------------------
-def download_model_from_drive(file_id):
-    """Returns the path of the downloaded .h5 file."""
-    URL = f"https://drive.google.com/uc?export=download&id={file_id}"
+@st.cache_resource
+def load_model():
+    st.info("Downloading model from Google Drive...")
 
     session = requests.Session()
-    response = session.get(URL, stream=True)
+    response = session.get(DOWNLOAD_URL, stream=True)
 
-    # Detect virus scan confirmation
-    def get_confirm_token(resp):
+    # handle Google Drive confirmation token
+    def get_confirm(resp):
         for key, val in resp.cookies.items():
             if key.startswith("download_warning"):
                 return val
         return None
 
-    token = get_confirm_token(response)
+    token = get_confirm(response)
     if token:
-        URL = f"https://drive.google.com/uc?export=download&id={file_id}&confirm={token}"
-        response = session.get(URL, stream=True)
+        response = session.get(f"{DOWNLOAD_URL}&confirm={token}", stream=True)
 
-    # Save file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".h5") as temp:
         for chunk in response.iter_content(1024 * 1024):
             temp.write(chunk)
-        return temp.name
-
-
-@st.cache_resource
-def load_model():
-    st.info("Downloading model from Google Drive...")
-    model_path = download_model_from_drive(FILE_ID)
+        model_path = temp.name
 
     st.info("Loading model...")
-    model = tf.keras.models.load_model(model_path)
-
-    st.success("Model loaded successfully!")
-    return model
-
+    try:
+        model = tf.keras.models.load_model(model_path)
+        st.success("Model loaded successfully!")
+        return model
+    except Exception as e:
+        st.error(f"Model load FAILED: {e}")
+        return None
 
 model = load_model()
 
-
-# -----------------------------
-# GRAD‑CAM FUNCTIONS
-# -----------------------------
-def make_gradcam_heatmap(img_array, model, last_conv_layer_name=LAST_CONV_LAYER):
+# ---------------------------------------------------------
+# 2) Grad‑CAM function
+# ---------------------------------------------------------
+def make_gradcam_heatmap(img_array, model, last_conv_layer_name="conv5_block3_out"):
     backbone = model.get_layer("resnet50")
-    last_conv_layer = backbone.get_layer(last_conv_layer_name)
+    last_conv = backbone.get_layer(last_conv_layer_name)
 
     grad_model = tf.keras.models.Model(
-        [model.input], [last_conv_layer.output, model.output]
+        inputs=model.input,
+        outputs=[last_conv.output, model.output]
     )
 
     with tf.GradientTape() as tape:
-        conv_out, preds = grad_model(img_array)
-        class_idx = tf.argmax(preds[0])
-        loss = preds[:, class_idx]
+        conv_outputs, predictions = grad_model(img_array)
+        class_idx = tf.argmax(predictions[0])
+        loss = predictions[:, class_idx]
 
-    grads = tape.gradient(loss, conv_out)
+    grads = tape.gradient(loss, conv_outputs)
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
 
-    conv_out = conv_out[0].numpy()
-    pooled = pooled_grads.numpy()
+    conv_outputs = conv_outputs[0].numpy()
+    pooled_grads = pooled_grads.numpy()
 
-    heatmap = np.zeros(conv_out.shape[:2], dtype=np.float32)
-    for i in range(len(pooled)):
-        heatmap += pooled[i] * conv_out[:, :, i]
+    heatmap = np.zeros(conv_outputs.shape[:2])
+    for i in range(pooled_grads.shape[0]):
+        heatmap += pooled_grads[i] * conv_outputs[:, :, i]
 
     heatmap = np.maximum(heatmap, 0)
-    heatmap /= np.max(heatmap) + 1e-6
+    if heatmap.max() > 0:
+        heatmap /= heatmap.max()
 
     return heatmap
 
+# ---------------------------------------------------------
+# 3) UI
+# ---------------------------------------------------------
+st.title("🔥 Skin Cancer Detector + Grad‑CAM")
 
-def overlay_heatmap(img, heatmap, alpha=0.4):
-    heatmap = cv2.resize(heatmap, (img.shape[1], img.shape[0]))
-    heatmap = np.uint8(255 * heatmap)
-    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
-    superimposed = cv2.addWeighted(img, 1 - alpha, heatmap, alpha, 0)
-    return superimposed
+if uploaded and model is not None:
+    img = Image.open(uploaded).convert("RGB")
+    st.image(img, caption="Uploaded Image")
 
+    img_resized = img.resize((224, 224))
+    img_arr = np.array(img_resized) / 255.0
+    img_arr = np.expand_dims(img_arr, axis=0)
 
-# -----------------------------
-# UI
-# -----------------------------
-st.title("🔥 Skin Lesion Classifier + Grad‑CAM")
-st.write("Upload an image to see prediction & heatmap.")
+    preds = model.predict(img_arr)
+    class_idx = np.argmax(preds)
 
-uploaded = st.file_uploader("Upload image", type=["jpg", "jpeg", "png"])
+    st.subheader("Prediction")
+    st.write(f"Class: **{class_idx}**")
+    st.write(f"Confidence: **{preds[0][class_idx]:.4f}**")
 
-if uploaded:
-    pil_img = Image.open(uploaded).convert("RGB")
-    st.image(pil_img, caption="Uploaded Image", use_column_width=True)
+    heatmap = make_gradcam_heatmap(img_arr, model)
 
-    # Preprocess
-    img_resized = pil_img.resize((224, 224))
-    img_array = np.expand_dims(np.array(img_resized) / 255.0, axis=0)
+    # overlay
+    orig = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+    heatmap_resized = cv2.resize(heatmap, (orig.shape[1], orig.shape[0]))
+    heatmap_resized = np.uint8(255 * heatmap_resized)
+    heatmap_color = cv2.applyColorMap(heatmap_resized, cv2.COLORMAP_JET)
 
-    # Prediction
-    preds = model.predict(img_array)
-    idx = np.argmax(preds[0])
-    conf = float(preds[0][idx])
+    superimposed = cv2.addWeighted(heatmap_color, 0.4, orig, 0.6, 0)
+    superimposed_rgb = cv2.cvtColor(superimposed, cv2.COLOR_BGR2RGB)
 
-    st.subheader("📌 Prediction")
-    st.write(f"**Class:** {CLASS_NAMES[idx]}")  
-    st.write(f"**Confidence:** {conf:.4f}")
-
-    # Grad‑CAM
-    with st.spinner("Generating Grad‑CAM..."):
-        heatmap = make_gradcam_heatmap(img_array, model)
-        img_bgr = cv2.cvtColor(np.array(img_resized), cv2.COLOR_RGB2BGR)
-        overlay = overlay_heatmap(img_bgr, heatmap)
-        overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
-
-        st.subheader("🔥 Grad‑CAM Heatmap")
-        st.image(overlay_rgb, use_column_width=True)
-
-        # Download button
-        is_ok, buf = cv2.imencode(".png", overlay)
-        if is_ok:
-            st.download_button(
-                "⬇️ Download Heatmap",
-                data=io.BytesIO(buf.tobytes()).getvalue(),
-                file_name="gradcam.png",
-                mime="image/png",
-            )
+    st.subheader("Grad‑CAM")
+    st.image(superimposed_rgb)
