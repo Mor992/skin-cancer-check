@@ -15,21 +15,26 @@ st.set_page_config(page_title="Skin Lesion Classifier", layout="centered")
 def load_model_from_drive():
     import requests
     import tempfile
-    url = "https://drive.google.com/file/d/1uHgOzbvTY8hus4_ApzLlv7VO-Ye5uWpX/view?usp=drive_link"
 
-    # Download file
+    url = "https://drive.google.com/uc?export=download&id=1uHgOzbvTY8hus4_ApzLlv7VO-Ye5uWpX"
+
     response = requests.get(url)
     if response.status_code != 200:
         st.error("Failed to download model! Check link permissions.")
         return None
 
-    # Save into temp file
+    # Save file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".h5") as temp:
         temp.write(response.content)
         temp_path = temp.name
 
-    # Load model
-    return tf.keras.models.load_model(temp_path)
+    # Try to load
+    try:
+        return tf.keras.models.load_model(temp_path)
+    except Exception as e:
+        st.error(f"Failed to load model: {e}")
+        return None
+
 
 
 model = load_model_from_drive()
