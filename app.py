@@ -19,7 +19,7 @@ except Exception:
 
 def load_model_from_local(path):
     if not os.path.exists(path):
-        raise FileNotFoundError(f"Model not found at {path}")
+        raise FileNotFoundError(f"Model not found at {https://drive.google.com/file/d/1kJWpQQlF-2Rtwj2xRmVtbDw-83cyjD3q/view?usp=drive_link}")
     model = tf.keras.models.load_model(path)
     return model
 
@@ -76,14 +76,17 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
 def overlay_heatmap_on_image(original_img: Image.Image, heatmap, alpha=0.4, cmap='jet'):
     import matplotlib.cm as cm
 
+    # Resize heatmap to original image size
     heatmap_resized = Image.fromarray((heatmap * 255).astype(np.uint8)).resize(original_img.size, resample=Image.BILINEAR)
     heatmap_arr = np.array(heatmap_resized)
 
+    # Apply colormap
     colormap = cm.get_cmap(cmap)
-    colored_heatmap = colormap(heatmap_arr / 255.0)[:, :, :3]
+    colored_heatmap = colormap(heatmap_arr / 255.0)[:, :, :3] # Get RGB without alpha
     colored_heatmap = (colored_heatmap * 255).astype(np.uint8)
     colored_heatmap = Image.fromarray(colored_heatmap)
 
+    # Overlay heatmap on original image
     overlay = Image.blend(original_img.convert('RGBA'), colored_heatmap.convert('RGBA'), alpha=alpha)
     return overlay
 
@@ -91,16 +94,17 @@ def overlay_heatmap_on_image(original_img: Image.Image, heatmap, alpha=0.4, cmap
 # Streamlit UI
 # ---------------------
 
-st.set_page_config(page_title='Cancer Type Prediction with Grad-CAM', layout='wide')
+st.set_page_config(page_title='Cancer Type Prediction with Grad-CAM', layout='wide') # Changed layout to wide
 st.title('Cancer Type Prediction with Grad-CAM (ResNet-compatible)')
-st.markdown('Upload a skin lesion image to get a cancer type prediction and visualize the most influential regions using Grad-CAM.')
+
+st.markdown("Upload a skin lesion image to get a cancer type prediction and visualize the most influential regions using Grad-CAM.")
 
 # defaults per user input
 DEFAULT_LOCAL_MODEL_PATH = "/mnt/data/final_resnet_model.keras"
 DEFAULT_GDRIVE_ID = "1kJWpQQlF-2Rtwj2xRmVtbDw-83cyjD3q"
-DEFAULT_CLASS_NAMES = 'Actinic Keratoses,Basal Cell Carcinoma,Melanoma,Not Cancer'
+DEFAULT_CLASS_NAMES = 'Actinic Keratoses,Basal Cell Carcinoma,Melanoma,Not Cancer' # Updated class names
 
-use_download = st.checkbox('Download model from Google Drive (if unchecked, load local file)', value=True)
+use_download = st.checkbox('Download model from Google Drive (if unchecked, load local file)', value=True) # Changed default to True
 model = None
 model_load_error = None
 
@@ -138,42 +142,47 @@ if model is not None:
             st.text('Unable to show model summary: ' + str(e))
 
 # Image input
-st.header('Upload Image for Analysis')
+st.header('Upload Image for Prediction')
 uploaded = st.file_uploader('Upload an image', type=['jpg','jpeg','png'])
 
+image = None
 if uploaded is not None:
     image = Image.open(uploaded)
     st.image(image, caption='Uploaded Image', use_column_width=True)
-else:
-    image = None
+
 
 # Class names input
-class_names_input = st.text_input('Comma-separated class names:', value=DEFAULT_CLASS_NAMES)
+class_names_input = st.text_input(
+    'Comma-separated class names for the model\'s output (e.g., Actinic Keratoses,Basal Cell Carcinoma,Melanoma,Not Cancer)',
+    value=DEFAULT_CLASS_NAMES # Set default class names
+)
 class_names = [c.strip() for c in class_names_input.split(',') if c.strip()]
 
 # Last convolutional layer name input (try common ResNet names)
 last_conv_default = st.text_input('Last convolutional layer name (ResNet example: conv5_block3_out)', value='conv5_block3_out')
 
 # Run Grad-CAM
-if st.button('Run Prediction and Grad-CAM'):
+if st.button('Predict and Generate Grad-CAM'):
     if model is None:
-        st.error('Load a model first')
+        st.error('Please load a model first.')
     elif image is None:
-        st.error('Upload an image first')
+        st.error('Please upload an image first.')
     else:
         try:
             # Preprocess
             target_size = (model.input_shape[1], model.input_shape[2]) if len(model.input_shape) >= 3 else (224,224)
+            original_image_resized = image.resize(target_size) # For consistent display
             pre = preprocess_input_image(image, target_size=target_size)
 
             # Predict
             preds = model.predict(np.expand_dims(pre, axis=0))
-            top_k = min(5, preds.shape[-1])
+            top_k = min(preds.shape[-1], 3) # Show top 3 predictions
             top_inds = preds[0].argsort()[-top_k:][::-1]
 
             # Display predictions
             st.subheader('Prediction Results')
             for i, idx in enumerate(top_inds):
+                # Ensure class_names list is long enough, otherwise use index
                 name = class_names[idx] if idx < len(class_names) else f"Class {idx}"
                 st.write(f"**{i+1}. {name}** — Confidence: {float(preds[0, idx]):.2%}")
 
@@ -182,7 +191,7 @@ if st.button('Run Prediction and Grad-CAM'):
             try:
                 heatmap = make_gradcam_heatmap(pre, model, last_conv_layer_name, pred_index=top_inds[0])
             except Exception as e:
-                st.error('Error computing Grad-CAM: ' + str(e))
+                st.error('Error computing Grad-CAM. Check the layer name or model structure: ' + str(e))
                 st.stop()
 
             overlay = overlay_heatmap_on_image(image, heatmap, alpha=0.4)
@@ -191,26 +200,26 @@ if st.button('Run Prediction and Grad-CAM'):
             st.subheader('Original Image vs. Grad-CAM Overlay')
             col1, col2 = st.columns(2)
             with col1:
-                st.image(image, caption='Original Image', use_column_width=True)
+                st.image(image, caption='Original Uploaded Image', use_column_width=True)
             with col2:
-                st.image(overlay, caption='Grad-CAM Overlay', use_column_width=True)
+                st.image(overlay, caption='Grad-CAM Overlay (Highlights important regions)', use_column_width=True)
 
-            # Also show raw heatmap
-            st.subheader('Raw Grad-CAM Heatmap')
-            fig, ax = plt.subplots()
-            ax.axis('off')
-            ax.imshow(heatmap, interpolation='nearest', cmap='jet')
-            st.pyplot(fig)
+            # Optional: Show raw heatmap for debugging/detail
+            with st.expander('Show Raw Heatmap'):
+                fig, ax = plt.subplots()
+                ax.axis('off')
+                ax.imshow(heatmap, interpolation='nearest', cmap='jet')
+                st.pyplot(fig)
 
         except Exception as e:
-            st.error('Failed to run Prediction and Grad-CAM: ' + str(e))
+            st.error('Failed to run prediction or Grad-CAM: ' + str(e))
 
 # Footer / tips
 st.markdown('''
 ---
 **Tips:**
-- **Model Loading:** By default, the app attempts to download the model from Google Drive. Ensure `gdown` is installed (`pip install gdown`) if using this option. If loading from a local path, confirm the path is correct.
-- **Class Names:** The default class names are pre-filled, but you can modify them if your model's output classes differ or are in a different order.
-- **Last Convolutional Layer:** If Grad-CAM fails or looks incorrect, check your model summary (expand 'Show model summary') to find the appropriate name for the last convolutional layer. For ResNet50, `conv5_block3_out` is a common choice.
-- **Preprocessing:** The app tries to use `tf.keras.applications.resnet50.preprocess_input`. If your model requires different preprocessing, ensure it's handled within the `preprocess_input_image` function.
+-   **Model Loading:** If downloading from Google Drive, ensure the file ID is correct and `gdown` is installed (`pip install gdown`). If loading locally, ensure the path is correct.
+-   **Layer Name:** If Grad-CAM fails, check the "Show model summary" section to find the correct name for the last convolutional layer (e.g., `conv5_block3_out` for many ResNet50 variants).
+-   **Class Names:** Provide accurate, comma-separated class names in the correct order corresponding to your model's output labels for meaningful predictions.
+-   **Preprocessing:** The app attempts to use `tf.keras.applications.resnet50.preprocess_input` if available, otherwise scales pixel values to `[0, 1]`. Ensure this matches your model's training preprocessing.
 ''')
