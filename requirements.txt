@@ -1,7 +1,5 @@
 streamlit
 tensorflow
-pillow
+opencv-python
 numpy
-matplotlib
-gdown
-
+Pillow
