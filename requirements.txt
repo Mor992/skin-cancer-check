@@ -1,7 +1,6 @@
 streamlit
-tensorflow
+tensorflow>=2.10
 opencv-python-headless
 numpy
 Pillow
-
-
+requests
