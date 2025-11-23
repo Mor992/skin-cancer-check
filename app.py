@@ -1,42 +1,47 @@
-# app.py
 import streamlit as st
-import numpy as np
-import tensorflow as tf
-from tensorflow.keras.preprocessing import image as kimage
-from tensorflow.keras.applications.resnet50 import preprocess_input
-import cv2
-import tempfile
 import requests
-import io
-from PIL import Image
+import tensorflow as tf
+import tempfile
 
-st.set_page_config(page_title="Skin Lesion Classifier", layout="centered")
+@st.cache_resource
+def load_model_from_drive():
+    FILE_ID = "1uHgOzbvTY8hus4_ApzLlv7VO-Ye5uWpX"
+    URL = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
 
-# ---------- Helpers: download from Google Drive (handles confirmation token) ----------
-def download_file_from_google_drive(file_id):
-    """Download a file from google drive and return path to temp file.
-       Handles large-file confirm token flow.
-    """
-    base_url = "https://drive.google.com/uc?export=download&id=1uHgOzbvTY8hus4_ApzLlv7VO-Ye5uWpX"
+    st.info("Downloading model from Google Drive...")
+
     session = requests.Session()
-    response = session.get(base_url, params={"id": file_id}, stream=True)
-    token = None
+    response = session.get(URL, stream=True)
 
-    # if response content is a small HTML page, Google may require confirm token
-    for key, value in response.cookies.items():
-        if key.startswith("download_warning"):
-            token = value
+    # Handle Google Drive virus-scan confirmation tokens
+    def get_confirm_token(resp):
+        for key, val in resp.cookies.items():
+            if key.startswith("download_warning"):
+                return val
+        return None
 
+    token = get_confirm_token(response)
     if token:
-        response = session.get(base_url, params={"id": file_id, "confirm": token}, stream=True)
+        URL = f"https://drive.google.com/uc?export=download&id={FILE_ID}&confirm={token}"
+        response = session.get(URL, stream=True)
 
-    # write to temp file
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".h5")
-    with tmp as f:
-        for chunk in response.iter_content(chunk_size=32768):
-            if chunk:
-                f.write(chunk)
-    return tmp.name
+    # Save file
+    st.info("Saving model file...")
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".h5") as temp:
+        for chunk in response.iter_content(1024*1024):
+            temp.write(chunk)
+        model_path = temp.name
+
+    # Load model
+    st.info("Loading model into memory...")
+    try:
+        model = tf.keras.models.load_model(model_path)
+        st.success("Model loaded successfully!")
+        return model
+    except Exception as e:
+        st.error(f"Failed to load model: {e}")
+        return None
+
 
 # ---------- Load model (cached) ----------
 @st.cache_resource
