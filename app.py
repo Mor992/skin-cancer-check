@@ -1,90 +1,110 @@
 import streamlit as st
-import tensorflow as tf
 import numpy as np
+import tensorflow as tf
+from tensorflow.keras.preprocessing import image
 import cv2
-from PIL import Image
-import io
+import tempfile
+import requests
 
-# ---------------------------
-# LOAD MODEL (LOCAL OR DRIVE)
-# ---------------------------
+st.set_page_config(page_title="Skin Lesion Classifier", layout="centered")
+
+# ---------------------------------------
+# 1) LOAD MODEL FROM GOOGLE DRIVE LINK
+# ---------------------------------------
 @st.cache_resource
-def load_model():
-    model_path = "https://drive.google.com/file/d/1PFrSDFTI7SI_f8JrxZ8hUcZb5jVyAnkD/view?usp=sharing"   # or path to Google Drive mounted file
-    model = tf.keras.models.load_model(model_path)
-    return model
+def load_model_from_drive():
+    url = "https://drive.google.com/uc?export=download&id=1PFrSDFTI7SI_f8JrxZ8hUcZb5jVyAnkD"
+    file = requests.get(url)
 
-model = load_model()
+    # Save temporarily
+    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".h5")
+    temp.write(file.content)
+    temp.flush()
+    return tf.keras.models.load_model(temp.name)
 
-# ---------------------------
-# GRAD‑CAM FUNCTION
-# ---------------------------
+model = load_model_from_drive()
+
+st.title("🔥 Skin Lesion Classification with Grad‑CAM")
+st.write("Upload an image and get prediction + visual explanation")
+
+# ---------------------------------------
+# 2) IMAGE UPLOAD
+# ---------------------------------------
+uploaded_file = st.file_uploader("Upload skin image", type=['jpg','jpeg','png'])
+
+# CLASS NAMES (edit if needed)
+CLASS_NAMES = ["benign", "malignant", "nevus", "other"]
+
+# ---------------------------------------
+# 3) GRADCAM FUNCTION
+# ---------------------------------------
 def make_gradcam_heatmap(img_array, model, last_conv_layer_name="conv5_block3_out"):
+    # Access the ResNet50 inside your model
+    backbone = model.get_layer("resnet50")
+    last_conv_layer = backbone.get_layer(last_conv_layer_name)
+
     grad_model = tf.keras.models.Model(
-        [model.inputs], 
-        [model.get_layer(last_conv_layer_name).output, model.output]
+        [backbone.input],
+        [last_conv_layer.output, backbone.output],
     )
 
     with tf.GradientTape() as tape:
-        conv_output, predictions = grad_model(img_array)
-        pred_idx = tf.argmax(predictions[0])
-        loss = predictions[:, pred_idx]
+        conv_outputs, predictions = grad_model(img_array)
+        class_idx = tf.argmax(predictions[0])
+        loss = predictions[:, class_idx]
 
-    grads = tape.gradient(loss, conv_output)
+    grads = tape.gradient(loss, conv_outputs)
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
 
-    conv_output = conv_output[0]
-    heatmap = conv_output @ pooled_grads[..., tf.newaxis]
+    conv_outputs = conv_outputs[0]
+    heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
     heatmap = tf.squeeze(heatmap)
-    heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
 
-    return heatmap.numpy()
+    heatmap = np.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
+    heatmap = heatmap.numpy()
+    return heatmap
 
-# ---------------------------
-# PREPROCESS FUNCTION
-# ---------------------------
-def preprocess_image(img):
-    img = img.resize((224, 224))
-    arr = np.array(img) / 255.0
-    arr = np.expand_dims(arr, axis=0)
-    return arr
 
-# ---------------------------
-# STREAMLIT UI
-# ---------------------------
-st.title("Skin Lesion Classifier + Grad‑CAM Heatmap")
-st.subheader("Upload an image and get a prediction report")
+def overlay_heatmap(img, heatmap):
+    heatmap = cv2.resize(heatmap, (img.shape[1], img.shape[0]))
+    heatmap = np.uint8(255 * heatmap)
 
-uploaded_file = st.file_uploader("Upload image", type=["jpg","jpeg","png"])
+    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+    super_imposed = heatmap * 0.4 + img
+    return np.uint8(super_imposed)
 
-if uploaded_file:
-    # display image
-    img = Image.open(uploaded_file).convert("RGB")
+
+# ---------------------------------------
+# 4) PROCESS IMAGE & PREDICT
+# ---------------------------------------
+if uploaded_file is not None:
+
+    # Load image
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    img = cv2.imdecode(file_bytes, 1)
+
     st.image(img, caption="Uploaded Image", use_column_width=True)
 
-    # preprocess
-    arr = preprocess_image(img)
+    # Prepare for model
+    img_resized = cv2.resize(img, (224, 224))
+    img_array = img_resized.astype("float32") / 255.0
+    img_array = np.expand_dims(img_array, axis=0)
 
-    # prediction
-    preds = model.predict(arr)
-    class_idx = np.argmax(preds[0])
-    confidence = np.max(preds[0])
+    # Prediction
+    preds = model.predict(img_array)
+    pred_idx = np.argmax(preds)
 
-    classes = ["Class 0", "Class 1", "Class 2", "Class 3"]  # ← replace with real labels
+    st.subheader("📌 Prediction")
+    st.write(f"**Class:** {CLASS_NAMES[pred_idx]}")
+    st.write(f"**Confidence:** {preds[0][pred_idx]:.4f}")
 
-    st.subheader("Prediction Report")
-    st.write(f"**Predicted Class:** {classes[class_idx]}")
-    st.write(f"**Confidence:** {confidence:.4f}")
+    # Grad-CAM
+    try:
+        heatmap = make_gradcam_heatmap(img_array, model)
+        img_with_heatmap = overlay_heatmap(img, heatmap)
 
-    # GRAD‑CAM
-    heatmap = make_gradcam_heatmap(arr, model)
+        st.subheader("🔥 Grad-CAM Heatmap")
+        st.image(img_with_heatmap, use_column_width=True)
+    except Exception as e:
+        st.error(f"GradCAM failed: {e}")
 
-    # apply heatmap to image
-    heatmap = cv2.resize(heatmap, (img.width, img.height))
-    heatmap = np.uint8(255 * heatmap)
-    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-
-    superimposed = cv2.addWeighted(np.array(img), 0.6, heatmap, 0.4, 0)
-
-    st.subheader("Grad‑CAM Heatmap")
-    st.image(superimposed, use_column_width=True)
