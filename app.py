@@ -15,7 +15,7 @@ st.set_page_config(page_title="Skin Lesion Classifier", layout="centered")
 def load_model_from_drive():
     import requests
     import tempfile
-    url = "https://drive.google.com/uc?export=download&id=1PFrSDFTI7SI_f8JrxZ8hUcZb5jVyAnkD"
+    url = "https://drive.google.com/file/d/1uHgOzbvTY8hus4_ApzLlv7VO-Ye5uWpX/view?usp=drive_link"
 
     # Download file
     response = requests.get(url)
