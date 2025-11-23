@@ -17,7 +17,7 @@ FILE_ID = "1kJWpQQlF-2Rtwj2xRmVtbDw-83cyjD3q"   # final_resnet_model.keras
 
 @st.cache_resource
 def load_model():
-    url = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
+    url = f"https://drive.google.com/file/d/1kJWpQQlF-2Rtwj2xRmVtbDw-83cyjD3q/view?usp=sharing"
     session = requests.Session()
 
     st.info("Downloading model from Google Drive...")
