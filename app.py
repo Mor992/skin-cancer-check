@@ -10,8 +10,8 @@ from matplotlib import cm
 # ---------------------------------------------------
 # CONFIG
 # ---------------------------------------------------
-MODEL_DRIVE_ID = "1XlZArIYbtkG3_NRyP2hsRBViY0C5T67f"
-MODEL_PATH = "model.weights.h5"
+MODEL_DRIVE_ID = "1Rw-X-K2o75B70rT2Dwo-WFeA_RvXXWI3"
+MODEL_PATH = "resnet_skin_cancer.h5"
 
 st.title("Skin Lesion Classifier with Grad-CAM++")
 
