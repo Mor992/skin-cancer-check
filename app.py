@@ -19,43 +19,59 @@ st.title("Skin Lesion Classifier with Grad-CAM++")
 # ---------------------------------------------------
 # GRAD-CAM++ IMPLEMENTATION
 # ---------------------------------------------------
-def compute_gradcam_pp(model, img_array):
-    # Find last conv layer
-    conv_layers = [layer.name for layer in model.layers if "conv" in layer.name or "res" in layer.name]
-    if not conv_layers:
-        return None
-    last_conv_layer = conv_layers[-1]
+def get_last_conv_layer(model):
+    # Recursively scan model for any Conv2D layer
+    last_conv = None
+    for layer in model.layers:
+        if isinstance(layer, tf.keras.layers.Conv2D):
+            last_conv = layer.name
+        # Handle nested models (ResNet, EfficientNet etc.)
+        if hasattr(layer, "layers"):
+            for sublayer in layer.layers:
+                if isinstance(sublayer, tf.keras.layers.Conv2D):
+                    last_conv = sublayer.name
+    return last_conv
 
-    # Create grad model
+
+def compute_gradcam_pp(model, img_array):
+    # Find last conv layer reliably
+    last_conv_layer = get_last_conv_layer(model)
+    if last_conv_layer is None:
+        return None
+
+    conv_layer = model.get_layer(last_conv_layer)
+
+    # Build Grad-CAM model
     grad_model = tf.keras.models.Model(
         inputs=model.inputs,
-        outputs=[model.get_layer(last_conv_layer).output, model.output]
+        outputs=[conv_layer.output, model.output]
     )
 
     with tf.GradientTape() as tape:
-        conv_output, predictions = grad_model(img_array)
-        pred_index = tf.argmax(predictions[0])
-        loss = predictions[:, pred_index]
+        conv_output, preds = grad_model(img_array)
+        class_idx = tf.argmax(preds[0])
+        loss = preds[:, class_idx]
 
     grads = tape.gradient(loss, conv_output)
     if grads is None:
         return None
 
+    # Grad-CAM++ calculations
     grads_power2 = tf.square(grads)
     grads_power3 = grads_power2 * grads
 
-    sum_conv = tf.reduce_sum(conv_output * grads_power3, axis=(1,2), keepdims=True)
+    sum_conv = tf.reduce_sum(conv_output * grads_power3, axis=(1, 2), keepdims=True)
     alpha_denom = 2 * grads_power2 + sum_conv
-    alpha_denom = tf.where(alpha_denom != 0, alpha_denom, tf.ones_like(alpha_denom))
-
+    alpha_denom = tf.where(alpha_denom == 0, tf.ones_like(alpha_denom), alpha_denom)
     alphas = grads_power2 / alpha_denom
-    weights = tf.reduce_sum(alphas * tf.nn.relu(grads), axis=(1,2))
 
+    weights = tf.reduce_sum(alphas * tf.nn.relu(grads), axis=(1, 2))
     cam = tf.reduce_sum(weights[:, None, None, :] * conv_output, axis=-1)[0]
-    cam = tf.nn.relu(cam).numpy()
 
+    cam = tf.nn.relu(cam).numpy()
     cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
     return cam
+
 
 
 def overlay_heatmap(image, heatmap):
