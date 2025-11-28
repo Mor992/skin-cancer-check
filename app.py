@@ -20,7 +20,6 @@ st.title("Skin Lesion Classifier")
 def load_model():
     # Download if missing
     if not os.path.exists(MODEL_PATH):
-        
         url = f"https://drive.google.com/uc?id={MODEL_DRIVE_ID}"
         gdown.download(url, MODEL_PATH, quiet=False)
     
