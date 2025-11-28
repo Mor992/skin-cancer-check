@@ -52,12 +52,7 @@ if uploaded_file:
     img_array = np.expand_dims(img_array, 0)
 
     # Predict
-    class_names = [
-        "Melanoma → Cancer (malignant)",
-        "Melanocytic Nevus → Usually benign",
-        "Basal Cell Carcinoma → Cancer",
-        "Actinic Keratosis → Pre-cancerous"
-    ]
+    
 
     pred = model.predict(img_array)[0]
     idx = int(np.argmax(pred))
