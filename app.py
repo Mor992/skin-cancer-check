@@ -8,8 +8,8 @@ import gdown
 # -----------------------------
 # CONFIG
 # -----------------------------
-MODEL_DRIVE_ID = "1lcgugQfz50PDNVFR6zxGZYuCJtm2IwfD"
-MODEL_PATH = "final_resnet_model.keras"
+MODEL_DRIVE_ID = "1Rw-X-K2o75B70rT2Dwo-WFeA_RvXXWI3"
+MODEL_PATH = "resnet_skin_cancer.h5"
 
 st.title("Skin Lesion Classifier")
 
