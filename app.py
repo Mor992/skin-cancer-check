@@ -96,20 +96,40 @@ def get_last_conv_layer(model: tf.keras.Model) -> Optional[str]:
 # -------------------------
 def grad_cam_plus_plus(model, image, class_idx, layer_name):
     """
-    model: keras model
-    image: a batch of one image, shape (1,H,W,3), float32 scaled 0-1
-    class_idx: integer index of target class
-    layer_name: convolutional layer name to use
-    returns: heatmap HxW (values 0..1)
+    Robust Grad-CAM++ implementation that handles cases where model.output
+    might be a list/tuple. Returns a heatmap (HxW) with values in [0,1].
     """
     grad_model = tf.keras.models.Model([model.inputs], [model.get_layer(layer_name).output, model.output])
 
     with tf.GradientTape() as tape:
         conv_outputs, predictions = grad_model(image)
-        # Safe indexing: ensure a scalar loss
-        # predictions shape expected (1, num_classes)
+
+        # If predictions is a list/tuple (e.g., model.output = [tensor]), use the first element
+        if isinstance(predictions, (list, tuple)):
+            # prefer the first element that looks like a tensor with batch dim
+            # fall back to predictions[0] if unsure
+            preds_candidate = None
+            for p in predictions:
+                try:
+                    # try to convert to tensor and check rank
+                    p_tensor = tf.convert_to_tensor(p)
+                    if p_tensor.shape.rank is not None and p_tensor.shape.rank >= 1:
+                        preds_candidate = p_tensor
+                        break
+                except Exception:
+                    continue
+            if preds_candidate is None:
+                # last resort
+                preds_candidate = tf.convert_to_tensor(predictions[0])
+            predictions = preds_candidate
+        else:
+            predictions = tf.convert_to_tensor(predictions)
+
+        # Ensure predictions has a batch dimension
+        # Now safe to index: predictions[0, class_idx]
         loss = predictions[0, class_idx]
 
+    # Compute gradients
     grads = tape.gradient(loss, conv_outputs)                    # shape (1, h, w, channels)
     grads_sq = tf.square(grads)
     grads_cu = grads_sq * grads
