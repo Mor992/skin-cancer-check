@@ -7,7 +7,7 @@ import os
 # ===========================
 # 1. Load Model From Drive
 # ===========================
-MODEL_PATH = "https://drive.google.com/file/d/1csR51feB60Uvzh3Qp4iMYuV9C0EkSMy_/view?usp=sharing"   # <-- change if needed
+MODEL_PATH = "1csR51feB60Uvzh3Qp4iMYuV9C0EkSMy_"   # <-- change if needed
 model = tf.keras.models.load_model(MODEL_PATH)
 
 # Class names for your model
