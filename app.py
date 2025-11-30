@@ -8,8 +8,11 @@ import gdown
 # ===========================
 # 1. Load Model From Drive
 # ===========================
-MODEL_PATH = "1csR51feB60Uvzh3Qp4iMYuV9C0EkSMy_"   # <-- change if needed
-model = tf.keras.models.load_model(MODEL_PATH)
+
+MODEL_PATH = "my_model.keras" 
+if not os.path.exists(MODEL_PATH):
+    url = "https://drive.google.com/uc?export=download&id=1csR51feB60Uvzh3Qp4iMYuV9C0EkSMy_"
+    gdown.download(url, MODEL_PATH, quiet=False)
 
 # Class names for your model
 CLASS_NAMES = ["Melanoma", "Nevus", "Seborrheic Keratosis"]  # example, change to yours
